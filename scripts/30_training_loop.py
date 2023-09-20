@@ -4,6 +4,10 @@ from torch.utils.data import Dataset, DataLoader
 from vit_pytorch import ViT, Dino
 from pathlib import Path
 
+# for pytorch profiler
+#from torch.profiler import profile, record_function, ProfilerActivity
+#import torch
+
 HOME=str(Path.home())
     
 class CustomDataset(Dataset):
@@ -25,7 +29,8 @@ device = torch.device("cuda:0") # if use_cuda else "cpu")
 torch.backends.cudnn.benchmark = True
 
 # Parameters
-params = {'batch_size': 200,'shuffle': True, 'num_workers': 2}
+# 
+params = {'batch_size': 256,'shuffle': True, 'num_workers': 4,'pin_memory':True}
 
 custom_dataset = CustomDataset(data_dir=f'{HOME}/workspace/hack_team_01/data/processed/patch_256')
 data_loader = DataLoader(custom_dataset, **params)
@@ -59,30 +64,37 @@ opt = torch.optim.Adam(learner.parameters(), lr = 3e-4)
 
 print(torch.cuda.is_available() , flush=True )
 
-torch.cuda.cudart().cudaProfilerStart()
-for epoch in range(3):
+
+# with torch.profiler.profile(record_shapes=True, use_cuda=True) as prof:
+for epoch in range(10):
     for i, batch in enumerate(data_loader):
         batch = batch.to(device)
+        opt.zero_grad()
         # forward
+        torch.cuda.cudart().cudaProfilerStart()
         torch.cuda.nvtx.range_push("iteration{}".format(i*(epoch+1)))
+        torch.cuda.nvtx.range_push("forward")
         loss = learner(batch)
+        torch.cuda.nvtx.range_pop()
 
         # backward 
         torch.cuda.nvtx.range_push("backward")
-        opt.zero_grad()
         loss.backward()
+        torch.cuda.nvtx.range_pop()
 
         # optimizer
         torch.cuda.nvtx.range_push("opt.step()")
         opt.step()
         learner.update_moving_average() 
+        torch.cuda.nvtx.range_pop()
 
 
         if i % 20 == 0:
             print(f"Step {i} :  {torch.cuda.memory_allocated(device=device)/(1024**3) } [GB]", flush=True)
-    torch.cuda.empty_cache()
 
 torch.cuda.cudart().cudaProfilerStop()
+# prof.export_chrome_trace("/home/a5sqyj6f/profiler_output.txt")
+# torch.cuda.cudart().cudaProfilerStop()
 
 #torch.save(model.state_dict(), './workspace/checkpoints/pretrained-net_modis_256_256_patch32_mod.pt')
 os.makedirs(f"{HOME}/ViT_clouds/run/profile",exist_ok=True)
